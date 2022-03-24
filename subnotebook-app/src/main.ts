@@ -14,12 +14,8 @@ type Type = TypeString | TypeNumber | TypeObject
 type ExprSymbol = { kind:"symbol", name:string }
 type ExprNumber = { kind:"number", value:number }
 type ExprString = { kind:"string", value:string }
-type ExprChain = { 
-  kind:"chain", 
-  instance:Expr
-  chain:{operation:string, args:Expr[]}[]
-}
-type Expr = ExprSymbol | ExprNumber | ExprString | ExprChain
+type ExprList = { kind:"list", items:Expr[] }
+type Expr = ExprSymbol | ExprNumber | ExprString | ExprList
 
 type Command = { variable:string, expression:Expr }
 type Program = Command[]
@@ -63,15 +59,22 @@ function formatExpr(vars:{[name:string]:TypedValue}, e:Expr) : TypedValue {
       throw "Variable or global not defined!"; 
     case "string": return { code:`'${e.value}'`, type:{kind:"string"} }
     case "number": return { code:e.value.toString(), type:{kind:"number"} }
-    case "chain": 
-      let current = formatExpr(vars, e.instance)
-      for(const c of e.chain) {
+    case "list": 
+      let instance = e.items[0]
+      let chain = e.items.slice(1)
+      let current = formatExpr(vars, instance)
+      for(const c of chain) {
         switch(current.type.kind) {
           case "object":
-            let args = c.args.map(a => formatExpr(vars, a).code)
-            if (!current.type.members[c.operation]) throw "Member not defined!"
-            let memberType = current.type.members[c.operation]
-            current = memberType(current.code, args)
+            if (c.kind != "list") throw "Expected list representing a chain"
+            let opExpr = c.items[0]
+            if (opExpr.kind != "symbol") throw "Expected symbol"
+            let operation = opExpr.name;
+            let args = c.items.slice(1)
+            let argsCode = args.map(a => formatExpr(vars, a).code)
+            if (!current.type.members[operation]) throw "Member not defined!"
+            let memberType = current.type.members[operation]
+            current = memberType(current.code, argsCode)
             break;
           default: throw `Not an object but ${current.type.kind}!`
         }
@@ -95,8 +98,11 @@ function formatProg(p:Program) {
 const e = {
   symbol: (n:string) : Expr => ({ kind: "symbol", name: n }),
   str: (s:string) : Expr => ({ kind: "string", value: s }),
-  chain: (i:Expr, ch:{operation:string, args:Expr[]}[]) : Expr => 
-    ({ kind:"chain", instance:i, chain:ch }),
+  chain: (i:Expr, ch:{operation:string, args:Expr[]}[]) : Expr => {
+    let ops : ExprList[] = 
+      ch.map(o => ({ kind:"list", items:[e.symbol(o.operation), ...o.args] }))
+    return ({ kind:"list", items:[i, ...ops] }) 
+  },
   member: (n:string, args:Expr[]) =>
     ({operation:n, args:args}),
   cmd: (v:string, e:Expr) : Command => ({variable: v, expression: e})
